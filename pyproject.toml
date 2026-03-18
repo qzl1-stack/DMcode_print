@@ -1,5 +1,12 @@
 [project]
-name = "PySide QtQuick Project"
+name = "dm-printer"
+version = "1.0.0"
+description = "专用DM码(Data Matrix)标签打印工具，替代BarTender"
+requires-python = ">=3.10"
+dependencies = [
+    "PyQt6>=6.6.0",
+    "pywin32>=306;sys_platform=='win32'",
+]
 
-[tool.pyside6-project]
-files = ["main.py", "main.qml"]
+[project.scripts]
+dm-printer = "dm_printer.__main__:main"
