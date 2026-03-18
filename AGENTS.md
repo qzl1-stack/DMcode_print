@@ -2,27 +2,31 @@
 
 ## Cursor Cloud specific instructions
 
-This is a minimal PySide6 QtQuick desktop GUI application ("Hello World" starter). There is no backend, no database, no tests, no CI/CD, and no linter configured.
+This is a PyQt6 desktop application — **DM码打印工具 v1.0** (Data Matrix code label printing tool). It generates DM codes (big codes: 8-digit sequential, small codes: XY-coordinate based) and sends ZPL-II instructions to Zebra printers. On non-Windows, the printer backend falls back to saving `.zpl` files (debug mode).
 
 ### Project structure
 
-- `main.py` — Python entry point (creates `QGuiApplication`, loads QML, runs event loop)
-- `main.qml` — QML UI definition (640x480 window titled "Hello World")
-- `requirements.txt` — Single dependency: `PySide6==6.8.2.1`
-- `pyproject.toml` — Project metadata for PySide6 tooling
+- `main.py` — Entry point (`QApplication` + `MainWindow`)
+- `dm_printer/main_window.py` — Main window UI (PyQt6 Widgets)
+- `dm_printer/code_generator.py` — Code generation logic (big/small codes)
+- `dm_printer/zpl_generator.py` — ZPL-II instruction generation for Zebra printers
+- `dm_printer/printer_backend.py` — Printer interface (win32print on Windows, file-save fallback on Linux)
+- `requirements.txt` — `PyQt6>=6.6.0` (+ `pywin32` on Windows only)
 
 ### Running the application
 
 ```bash
 source /workspace/.venv/bin/activate
-DISPLAY=:1 QT_QUICK_BACKEND=software python3 main.py
+DISPLAY=:1 python3 main.py
 ```
 
-- **`QT_QUICK_BACKEND=software`** is required in this VM because hardware OpenGL acceleration is not available. Without it, QtQuick will fail to render.
-- **`DISPLAY=:1`** uses the VM's desktop display. For headless/CI testing, use `DISPLAY=:99` with Xvfb (`Xvfb :99 -screen 0 1280x1024x24 &`).
+- On headless Linux, use Xvfb: `Xvfb :99 -screen 0 1280x1024x24 &` then `DISPLAY=:99 python3 main.py`.
+- No `QT_QUICK_BACKEND=software` needed — this app uses QtWidgets (not QtQuick).
+- On non-Windows, the printer selector shows `[调试] 保存到文件 (非Windows系统)` and print actions save ZPL to `last_print.zpl` instead of sending to a printer.
 
 ### Notes
 
-- No automated tests exist in this project (`.gitignore` even excludes `test_*.py`).
-- No linter is configured. If needed, install and run `pylint` or `ruff` manually.
-- The venv is at `/workspace/.venv`. Always activate it before running.
+- No automated tests exist in this project.
+- No linter is configured. Use `ruff` or `pylint` manually if needed.
+- The venv is at `/workspace/.venv`. Always activate before running.
+- `pywin32` dependency is Windows-only and skipped on Linux automatically.
