@@ -107,7 +107,25 @@ ApplicationWindow {
                         verticalAlignment: Text.AlignVCenter
                     }
 
-                    onClicked: backend.printLabels(printerCombo.currentText)
+                    onClicked: backend.printLabels()
+                }
+
+                Button {
+                    Layout.fillWidth: true
+                    text: "📋 预览打印"
+                    font.pixelSize: 13
+                    background: Rectangle {
+                        color: parent.pressed ? "#E07B00" : (parent.hovered ? "#FF8C00" : "#FFA500")
+                        radius: 4
+                    }
+                    contentItem: Text {
+                        text: parent.text
+                        font: parent.font
+                        color: "white"
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: backend.previewPrint()
                 }
 
                 Button {

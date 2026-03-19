@@ -94,31 +94,55 @@ class Backend(QObject):
         except Exception as exc:
             self._set_status(f"预览生成失败: {exc}")
 
-    @Slot(str)
-    def printLabels(self, printer_name: str) -> None:
+    @Slot()
+    def printLabels(self) -> None:
+        """打印标签（真实打印机）."""
         code = self._code_value.strip()
         if not code:
             self._set_status("请输入码值")
             return
-        if not printer_name.strip():
-            self._set_status("请选择打印机")
+
+        printer = getattr(self, "_current_printer", None)
+        if not printer:
+            self._set_status("请先选择打印机")
             return
 
         codes = generate_batch_codes(code, self._batch_count)
         total = len(codes)
         success = 0
 
-        for idx, c in enumerate(codes):
-            self._set_status(f"正在打印 {idx + 1}/{total} ...")
+        for idx, c in enumerate(codes, start=1):
+            self._set_status(f"正在打印 {idx}/{total} ...")
             zpl_list = generate_zpl(c)
             for zpl in zpl_list:
-                msg = send_zpl(zpl, printer_name)
+                msg = send_zpl(zpl, printer)
                 if "错误" in msg or "出错" in msg:
-                    self._set_status(f"第 {idx + 1} 张打印失败: {msg}")
+                    self._set_status(f"第 {idx} 张打印失败: {msg}")
                     return
             success += 1
 
         self._set_status(f"打印完成: {success}/{total} 张标签")
+
+    @Slot()
+    def previewPrint(self) -> None:
+        """预览打印（生成图片预览，不实际打印）."""
+        code = self._code_value.strip()
+        if not code:
+            self._set_status("请输入码值")
+            return
+
+        try:
+            from dm_printer.page_renderer import render_page_preview
+            codes = generate_batch_codes(code, self._batch_count)
+            path = render_page_preview(codes)
+            ts = int(time.time() * 1000)
+            self._preview_url = (
+                QUrl.fromLocalFile(path).toString() + f"?t={ts}"
+            )
+            self.previewUrlChanged.emit()
+            self._set_status(f"预览已生成 — 共 {len(codes)} 个码，{len(codes) // 16 + (1 if len(codes) % 16 else 0)} 张标签")
+        except Exception as exc:
+            self._set_status(f"预览生成失败: {exc}")
 
     @Slot(str, str)
     def saveZpl(self, printer_name: str, save_path: str) -> None:
