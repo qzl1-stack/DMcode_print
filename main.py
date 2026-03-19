@@ -6,7 +6,7 @@
 
 import sys
 
-from PyQt6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication
 
 from dm_printer.main_window import MainWindow
 

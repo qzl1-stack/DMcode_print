@@ -1,13 +1,13 @@
-"""DM码打印工具 — PyQt6 主窗口."""
+"""DM码打印工具 — PySide6 主窗口."""
 
 from __future__ import annotations
 
 import math
 from typing import Optional
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont, QIntValidator
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont, QIntValidator
+from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
     QCheckBox,
