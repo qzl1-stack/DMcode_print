@@ -8,7 +8,7 @@ import tempfile
 import time
 from typing import Optional
 
-from PyQt6.QtCore import QObject, pyqtProperty, pyqtSignal, pyqtSlot, QUrl
+from PySide6.QtCore import QObject, Property, Signal, Slot, QUrl
 
 from dm_printer.label_renderer import render_label, CODES_PER_LABEL
 from dm_printer.code_generator import generate_batch_codes
@@ -19,11 +19,11 @@ from dm_printer.printer_backend import get_available_printers, send_zpl
 class Backend(QObject):
     """QML 后端：码号生成、标签预览、打印."""
 
-    codeValueChanged = pyqtSignal()
-    batchCountChanged = pyqtSignal()
-    previewUrlChanged = pyqtSignal()
-    statusChanged = pyqtSignal()
-    printerListChanged = pyqtSignal()
+    codeValueChanged = Signal()
+    batchCountChanged = Signal()
+    previewUrlChanged = Signal()
+    statusChanged = Signal()
+    printerListChanged = Signal()
 
     def __init__(self, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
@@ -34,7 +34,7 @@ class Backend(QObject):
         self._printers: list[str] = get_available_printers()
         self._preview_dir = tempfile.mkdtemp(prefix="dm_preview_")
 
-    @pyqtProperty(str, notify=codeValueChanged)
+    @Property(str, notify=codeValueChanged)
     def codeValue(self) -> str:
         return self._code_value
 
@@ -44,7 +44,7 @@ class Backend(QObject):
             self._code_value = value
             self.codeValueChanged.emit()
 
-    @pyqtProperty(int, notify=batchCountChanged)
+    @Property(int, notify=batchCountChanged)
     def batchCount(self) -> int:
         return self._batch_count
 
@@ -54,15 +54,15 @@ class Backend(QObject):
             self._batch_count = max(1, value)
             self.batchCountChanged.emit()
 
-    @pyqtProperty(str, notify=previewUrlChanged)
+    @Property(str, notify=previewUrlChanged)
     def previewUrl(self) -> str:
         return self._preview_url
 
-    @pyqtProperty(str, notify=statusChanged)
+    @Property(str, notify=statusChanged)
     def status(self) -> str:
         return self._status
 
-    @pyqtProperty("QStringList", notify=printerListChanged)
+    @Property("QStringList", notify=printerListChanged)
     def printerList(self) -> list[str]:
         return self._printers
 
@@ -70,7 +70,7 @@ class Backend(QObject):
         self._status = msg
         self.statusChanged.emit()
 
-    @pyqtSlot()
+    @Slot()
     def generatePreview(self) -> None:
         code = self._code_value.strip()
         if not code:
@@ -94,7 +94,7 @@ class Backend(QObject):
         except Exception as exc:
             self._set_status(f"预览生成失败: {exc}")
 
-    @pyqtSlot(str)
+    @Slot(str)
     def printLabels(self, printer_name: str) -> None:
         code = self._code_value.strip()
         if not code:
@@ -120,7 +120,7 @@ class Backend(QObject):
 
         self._set_status(f"打印完成: {success}/{total} 张标签")
 
-    @pyqtSlot(str, str)
+    @Slot(str, str)
     def saveZpl(self, printer_name: str, save_path: str) -> None:
         code = self._code_value.strip()
         if not code:
@@ -145,7 +145,7 @@ class Backend(QObject):
         except Exception as exc:
             self._set_status(f"保存失败: {exc}")
 
-    @pyqtSlot()
+    @Slot()
     def refreshPrinters(self) -> None:
         self._printers = get_available_printers()
         self.printerListChanged.emit()

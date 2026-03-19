@@ -7,8 +7,8 @@
 import sys
 from pathlib import Path
 
-from PyQt6.QtGui import QGuiApplication
-from PyQt6.QtQml import QQmlApplicationEngine
+from PySide6.QtGui import QGuiApplication
+from PySide6.QtQml import QQmlApplicationEngine
 
 from dm_printer.backend import Backend
 
