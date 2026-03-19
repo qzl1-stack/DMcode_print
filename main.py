@@ -1,21 +1,34 @@
-"""DM码打印工具 — 入口文件.
+"""DM码打印工具 — QML 入口文件.
 
 用法：
     python main.py
 """
 
 import sys
+from pathlib import Path
 
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtGui import QGuiApplication
+from PyQt6.QtQml import QQmlApplicationEngine
 
-from dm_printer.main_window import MainWindow
+from dm_printer.backend import Backend
 
 
 def main() -> None:
-    app = QApplication(sys.argv)
-    app.setStyle("Fusion")
-    window = MainWindow()
-    window.show()
+    app = QGuiApplication(sys.argv)
+    app.setApplicationName("DM码打印工具")
+    app.setApplicationVersion("2.0")
+
+    engine = QQmlApplicationEngine()
+
+    backend = Backend()
+    engine.rootContext().setContextProperty("backend", backend)
+
+    qml_file = str(Path(__file__).resolve().parent / "main.qml")
+    engine.load(qml_file)
+
+    if not engine.rootObjects():
+        sys.exit(-1)
+
     sys.exit(app.exec())
 
 

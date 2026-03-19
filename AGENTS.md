@@ -2,16 +2,18 @@
 
 ## Cursor Cloud specific instructions
 
-This is a PyQt6 desktop application — **DM码打印工具 v1.0** (Data Matrix code label printing tool). It generates DM codes (big codes: 8-digit sequential, small codes: XY-coordinate based) and sends ZPL-II instructions to Zebra printers. On non-Windows, the printer backend falls back to saving `.zpl` files (debug mode).
+This is a PyQt6 + QML desktop application — **DM码打印工具 v2.0** (Data Matrix code label printing tool). It renders label previews with 16 identical DM codes in a 4×4 grid on a 100×100mm template (dashed border, XY axes, code value in top-right), and generates ZPL-II instructions for Zebra printers.
 
 ### Project structure
 
-- `main.py` — Entry point (`QApplication` + `MainWindow`)
-- `dm_printer/main_window.py` — Main window UI (PyQt6 Widgets)
-- `dm_printer/code_generator.py` — Code generation logic (big/small codes)
-- `dm_printer/zpl_generator.py` — ZPL-II instruction generation for Zebra printers
-- `dm_printer/printer_backend.py` — Printer interface (win32print on Windows, file-save fallback on Linux)
-- `requirements.txt` — `PyQt6>=6.6.0` (+ `pywin32` on Windows only)
+- `main.py` — QML entry point (`QGuiApplication` + `QQmlApplicationEngine`)
+- `main.qml` — QML UI (two-panel: controls + preview)
+- `dm_printer/backend.py` — QObject bridge exposing business logic to QML
+- `dm_printer/label_renderer.py` — Pillow + pylibdmtx label preview renderer
+- `dm_printer/code_generator.py` — Batch code generation (auto-increment)
+- `dm_printer/zpl_generator.py` — ZPL-II instruction generator (16 identical codes per label)
+- `dm_printer/printer_backend.py` — Printer interface (win32print on Windows, file-save on Linux)
+- `requirements.txt` — PyQt6, Pillow, pylibdmtx, setuptools
 
 ### Running the application
 
@@ -20,13 +22,14 @@ source /workspace/.venv/bin/activate
 DISPLAY=:1 python3 main.py
 ```
 
-- On headless Linux, use Xvfb: `Xvfb :99 -screen 0 1280x1024x24 &` then `DISPLAY=:99 python3 main.py`.
-- No `QT_QUICK_BACKEND=software` needed — this app uses QtWidgets (not QtQuick).
-- On non-Windows, the printer selector shows `[调试] 保存到文件 (非Windows系统)` and print actions save ZPL to `last_print.zpl` instead of sending to a printer.
+### System dependencies
+
+- `libdmtx0b` and `libdmtx-dev` — required by `pylibdmtx` for Data Matrix encoding
+- Qt/XCB libraries — required by PyQt6 for GUI rendering
 
 ### Notes
 
-- No automated tests exist in this project.
-- No linter is configured. Use `ruff` or `pylint` manually if needed.
+- On non-Windows, printer dropdown shows `[调试] 保存到文件`, and print saves ZPL to `last_print.zpl`.
+- Each label contains 16 **identical** DM codes. For batch printing, each label gets a different code value (auto-incremented).
 - The venv is at `/workspace/.venv`. Always activate before running.
-- `pywin32` dependency is Windows-only and skipped on Linux automatically.
+- No automated tests or linter configured in this project.
