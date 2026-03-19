@@ -1,12 +1,18 @@
 [project]
 name = "dm-printer"
-version = "1.0.0"
+version = "2.0.0"
 description = "专用DM码(Data Matrix)标签打印工具，替代BarTender"
 requires-python = ">=3.10"
 dependencies = [
     "PyQt6>=6.6.0",
+    "Pillow>=10.0.0",
+    "pylibdmtx>=0.1.9",
+    "setuptools",
     "pywin32>=306;sys_platform=='win32'",
 ]
 
 [project.scripts]
 dm-printer = "dm_printer.__main__:main"
+
+[tool.pyside6-project]
+files = ["main.py", "main.qml"]
