@@ -21,13 +21,15 @@ from PIL import Image, ImageDraw, ImageFont
 from pylibdmtx.pylibdmtx import encode as dm_encode
 
 LABEL_MM = 100.0
-DPI = 203
+DPI = 300
 RENDER_SCALE = 4
-LABEL_PX = int(LABEL_MM / 25.4 * DPI * RENDER_SCALE)
+LABEL_PX = int(LABEL_MM / 25.  * DPI * RENDER_SCALE)
 
-BORDER_SIZE_MM = 85.0
-BORDER_CENTER_MM = 50.0
-BORDER_HALF_MM = BORDER_SIZE_MM / 2.0
+# 虚线框：参考点为左上角 (x,y)，宽高 (w,h)
+BORDER_X_MM = 7.5
+BORDER_Y_MM = 7.5
+BORDER_W_MM = 85.0
+BORDER_H_MM = 85.0
 
 AXIS_START_MM = 1.0
 AXIS_END_MM = 99.0
@@ -35,6 +37,7 @@ AXIS_CENTER_MM = 50.0
 
 ARROW_LENGTH_MM = 4.0
 ARROW_WIDTH_MM = 2.8
+HOLLOW_ARROW_LINE_PT = 0.3
 
 POSITIONS_MM: list[tuple[float, float]] = [
     (20, 20), (40, 20), (60, 20), (80, 20),
@@ -46,7 +49,7 @@ POSITIONS_MM: list[tuple[float, float]] = [
 CODES_PER_LABEL = len(POSITIONS_MM)
 
 DM_MODULES = 12
-DM_MODULE_SIZE_MM = 1.25
+DM_MODULE_SIZE_MM = 1.45
 DM_SYMBOL_MM = DM_MODULES * DM_MODULE_SIZE_MM
 
 
@@ -60,6 +63,12 @@ def _pt(pt: float) -> int:
 
 def _load_font(size_px: int) -> ImageFont.FreeTypeFont:
     paths = [
+        # Windows（优先 Arial）
+        r"C:\Windows\Fonts\arialbd.ttf",
+        r"C:\Windows\Fonts\arial.ttf",
+        r"C:\Windows\Fonts\Arial.ttf",
+        r"C:\Windows\Fonts\msyh.ttc",
+        r"C:\Windows\Fonts\simhei.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
@@ -68,6 +77,34 @@ def _load_font(size_px: int) -> ImageFont.FreeTypeFont:
         if os.path.exists(p):
             return ImageFont.truetype(p, size_px)
     return ImageFont.load_default()
+
+
+def _draw_text_with_anchor(
+    draw: ImageDraw.ImageDraw,
+    pos: tuple[int, int],
+    text: str,
+    font: ImageFont.FreeTypeFont,
+    fill: str,
+    anchor: str,
+) -> None:
+    bbox = draw.textbbox((0, 0), text, font=font)
+    w = bbox[2] - bbox[0]
+    h = bbox[3] - bbox[1]
+    x, y = pos
+
+    if anchor == "right_bottom":
+        x -= w
+        y -= h
+    elif anchor == "bottom_center":
+        x -= w // 2
+        y -= h
+    elif anchor == "left_top":
+        pass
+    else:
+        x -= w
+        y -= h
+
+    draw.text((x, y), text, fill=fill, font=font)
 
 
 def _draw_dashed_line(
@@ -163,7 +200,10 @@ def _draw_hollow_arrow(
 
 
 def _render_dm(data: str, target_px: int) -> Image.Image:
-    encoded = dm_encode(data.encode("utf-8"))
+    try:
+        encoded = dm_encode(data.encode("utf-8"), size="12x12")
+    except TypeError:
+        encoded = dm_encode(data.encode("utf-8"))
     img = Image.frombytes(
         "RGB", (encoded.width, encoded.height), encoded.pixels
     )
@@ -190,14 +230,14 @@ def render_label(
     label = Image.new("RGB", (LABEL_PX, LABEL_PX), "white")
     draw = ImageDraw.Draw(label)
 
-    # ── 虚线边框 85×85mm, 0.5pt, 虚线样式匹配 BarTender ──
-    border_x0 = _mm(BORDER_CENTER_MM - BORDER_HALF_MM)
-    border_y0 = _mm(BORDER_CENTER_MM - BORDER_HALF_MM)
-    border_x1 = _mm(BORDER_CENTER_MM + BORDER_HALF_MM)
-    border_y1 = _mm(BORDER_CENTER_MM + BORDER_HALF_MM)
+    # ── 虚线边框 ──
+    border_x0 = _mm(BORDER_X_MM)
+    border_y0 = _mm(BORDER_Y_MM)
+    border_x1 = _mm(BORDER_X_MM + BORDER_W_MM)
+    border_y1 = _mm(BORDER_Y_MM + BORDER_H_MM)
 
-    dash = _mm(5.5)
-    gap = _mm(3.0)
+    dash = _mm(1.0)
+    gap = _mm(1.0)
     border_w = _pt(0.5)
     _draw_dashed_rect(
         draw,
@@ -213,37 +253,54 @@ def render_label(
     y_top = _mm(AXIS_START_MM)
     y_bottom = _mm(AXIS_END_MM)
 
-    # X 轴: 水平线
-    draw.line([(x_left, cx), (x_right, cx)], fill="black", width=axis_w)
+    # X 轴: 水平线（线段缩进一个箭头长度，避免穿过箭头）
+    arrow_len_px = _mm(ARROW_LENGTH_MM)
+    draw.line(
+        [(x_left + arrow_len_px, cx), (x_right - arrow_len_px, cx)],
+        fill="black",
+        width=axis_w,
+    )
     _draw_filled_arrow(draw, (x_right, cx), (1, 0))
-    _draw_hollow_arrow(draw, (x_left, cx), (-1, 0), axis_w)
+    _draw_hollow_arrow(draw, (x_left, cx), (-1, 0), _pt(HOLLOW_ARROW_LINE_PT))
 
-    # Y 轴: 垂直线 (正方向朝上)
-    draw.line([(cx, y_top), (cx, y_bottom)], fill="black", width=axis_w)
+    # Y 轴: 垂直线（线段缩进一个箭头长度，避免穿过箭头）
+    draw.line(
+        [(cx, y_top + arrow_len_px), (cx, y_bottom - arrow_len_px)],
+        fill="black",
+        width=axis_w,
+    )
     _draw_filled_arrow(draw, (cx, y_top), (0, -1))
-    _draw_hollow_arrow(draw, (cx, y_bottom), (0, 1), axis_w)
+    _draw_hollow_arrow(draw, (cx, y_bottom), (0, 1), _pt(HOLLOW_ARROW_LINE_PT))
 
     # ── 轴标签 ──
-    font_axis = _load_font(int(12 * RENDER_SCALE))
-    font_code = _load_font(int(10 * RENDER_SCALE))
+    font_axis = _load_font(int(30 * RENDER_SCALE))
+    font_code = _load_font(int(40 * RENDER_SCALE))
 
-    draw.text(
-        (x_right - _mm(2), cx - _mm(7)),
-        "X", fill="black", font=font_axis,
+    _draw_text_with_anchor(
+        draw,
+        (_mm(97), _mm(46)),
+        "X",
+        font_axis,
+        "black",
+        "right_bottom",
     )
-    draw.text(
-        (cx - _mm(5), y_top - _mm(2)),
-        "Y", fill="black", font=font_axis,
+    _draw_text_with_anchor(
+        draw,
+        (_mm(47), _mm(6)),
+        "Y",
+        font_axis,
+        "black",
+        "right_bottom",
     )
 
-    # ── 码值文字 右上角 ──
-    bbox_t = draw.textbbox((0, 0), code_value, font=font_code)
-    tw = bbox_t[2] - bbox_t[0]
-    draw.text(
-        (border_x1 - tw, border_y0 - _mm(7)),
+    # ── 码值文字 ──
+    _draw_text_with_anchor(
+        draw,
+        (_mm(75.8), _mm(6)),
         code_value,
-        fill="black",
-        font=font_code,
+        font_code,
+        "black",
+        "bottom_center",
     )
 
     # ── 16 个 DM 码 (12×12 模块) ──

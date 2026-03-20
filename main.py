@@ -9,11 +9,13 @@ from pathlib import Path
 
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQuickControls2 import QQuickStyle
 
 from dm_printer.backend import Backend
 
 
 def main() -> None:
+    QQuickStyle.setStyle("Fusion")
     app = QGuiApplication(sys.argv)
     app.setApplicationName("DM码打印工具")
     app.setApplicationVersion("2.0")

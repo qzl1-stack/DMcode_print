@@ -1,13 +1,15 @@
-"""码号生成器：支持大码（8位数字）和小码（XY坐标+A）两种格式.
+"""码号生成器.
 
 核心规则：
 - 一张标签上的 16 个 DM 码值 **完全相同**。
-- 批量打印时，每张标签的码值递增。
+- 批量打印时，每张标签的码值递增（递增次数 = 打印张数 - 1）。
+
+当前规则：
+- 输入一个纯数字（例如 1）
+- 打印张数为 N 时，生成：1, 2, ..., N
 """
 
 from __future__ import annotations
-
-import re
 
 
 def generate_big_codes(start: int, count: int) -> list[str]:
@@ -54,17 +56,7 @@ def generate_batch_codes(start_code: str, count: int) -> list[str]:
     """
     if count <= 0:
         return []
-    if count == 1:
-        return [start_code]
 
-    m = re.match(r"^(\D*)(\d+)(\D*)$", start_code)
-    if m:
-        prefix, num_str, suffix = m.groups()
-        width = len(num_str)
-        start_num = int(num_str)
-        return [
-            f"{prefix}{start_num + i:0{width}d}{suffix}"
-            for i in range(count)
-        ]
-
-    return [start_code] * count
+    start_code = start_code.strip()
+    start_num = int(start_code)
+    return [str(start_num + i) for i in range(count)]

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 import os
 import tempfile
 import time
@@ -21,15 +20,17 @@ class Backend(QObject):
 
     codeValueChanged = Signal()
     batchCountChanged = Signal()
-    previewUrlChanged = Signal()
+    previewImageUrlsChanged = Signal()
     statusChanged = Signal()
     printerListChanged = Signal()
 
+    kMaxPreviewLabels = 10
+
     def __init__(self, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
-        self._code_value: str = "00090001"
+        self._code_value: str = "1"
         self._batch_count: int = 1
-        self._preview_url: str = ""
+        self._preview_image_urls: list[str] = []
         self._status: str = "就绪"
         self._printers: list[str] = get_available_printers()
         self._preview_dir = tempfile.mkdtemp(prefix="dm_preview_")
@@ -54,9 +55,9 @@ class Backend(QObject):
             self._batch_count = max(1, value)
             self.batchCountChanged.emit()
 
-    @Property(str, notify=previewUrlChanged)
-    def previewUrl(self) -> str:
-        return self._preview_url
+    @Property("QStringList", notify=previewImageUrlsChanged)
+    def previewImageUrls(self) -> list[str]:
+        return self._preview_image_urls
 
     @Property(str, notify=statusChanged)
     def status(self) -> str:
@@ -76,33 +77,52 @@ class Backend(QObject):
         if not code:
             self._set_status("请输入码值")
             return
+        if not code.isdigit():
+            self._set_status("码值必须为纯数字（例如 1）")
+            return
         try:
-            path = os.path.join(self._preview_dir, "preview.png")
-            render_label(code, path)
+            codes = generate_batch_codes(code, self._batch_count)
+            total = len(codes)
+            show_n = min(total, self.kMaxPreviewLabels)
+            show_codes = codes[:show_n]
             ts = int(time.time() * 1000)
-            self._preview_url = (
-                QUrl.fromLocalFile(path).toString() + f"?t={ts}"
-            )
-            self.previewUrlChanged.emit()
+            urls: list[str] = []
+            for i, c in enumerate(show_codes):
+                path = os.path.join(
+                    self._preview_dir, f"preview_label_{i}.png"
+                )
+                render_label(c, path)
+                urls.append(
+                    QUrl.fromLocalFile(path).toString() + f"?t={ts}"
+                )
+            self._preview_image_urls = urls
+            self.previewImageUrlsChanged.emit()
 
-            labels = math.ceil(self._batch_count * 1.0)
-            self._set_status(
-                f"预览已生成 — 码值: {code}, "
-                f"每张标签 {CODES_PER_LABEL} 个码, "
-                f"共 {self._batch_count} 张标签"
-            )
+            if total > self.kMaxPreviewLabels:
+                self._set_status(
+                    f"预览已生成 — 显示前 {show_n} 张（共 {total} 张），"
+                    f"每张 {CODES_PER_LABEL} 个相同 DM 码"
+                )
+            else:
+                self._set_status(
+                    f"预览已生成 — 共 {total} 张标签，"
+                    f"每张 {CODES_PER_LABEL} 个相同 DM 码"
+                )
         except Exception as exc:
             self._set_status(f"预览生成失败: {exc}")
 
-    @Slot()
-    def printLabels(self) -> None:
+    @Slot(str)
+    def printLabels(self, printer_name: str) -> None:
         """打印标签（真实打印机）."""
         code = self._code_value.strip()
         if not code:
             self._set_status("请输入码值")
             return
+        if not code.isdigit():
+            self._set_status("码值必须为纯数字（例如 1）")
+            return
 
-        printer = getattr(self, "_current_printer", None)
+        printer = (printer_name or "").strip()
         if not printer:
             self._set_status("请先选择打印机")
             return
@@ -123,32 +143,14 @@ class Backend(QObject):
 
         self._set_status(f"打印完成: {success}/{total} 张标签")
 
-    @Slot()
-    def previewPrint(self) -> None:
-        """预览打印（生成图片预览，不实际打印）."""
-        code = self._code_value.strip()
-        if not code:
-            self._set_status("请输入码值")
-            return
-
-        try:
-            from dm_printer.page_renderer import render_page_preview
-            codes = generate_batch_codes(code, self._batch_count)
-            path = render_page_preview(codes)
-            ts = int(time.time() * 1000)
-            self._preview_url = (
-                QUrl.fromLocalFile(path).toString() + f"?t={ts}"
-            )
-            self.previewUrlChanged.emit()
-            self._set_status(f"预览已生成 — 共 {len(codes)} 个码，{len(codes) // 16 + (1 if len(codes) % 16 else 0)} 张标签")
-        except Exception as exc:
-            self._set_status(f"预览生成失败: {exc}")
-
     @Slot(str, str)
     def saveZpl(self, printer_name: str, save_path: str) -> None:
         code = self._code_value.strip()
         if not code:
             self._set_status("请输入码值")
+            return
+        if not code.isdigit():
+            self._set_status("码值必须为纯数字（例如 1）")
             return
 
         codes = generate_batch_codes(code, self._batch_count)
