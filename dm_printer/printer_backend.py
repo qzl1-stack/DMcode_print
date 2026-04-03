@@ -10,8 +10,26 @@ import sys
 from typing import Optional
 
 
+def _is_zebra_zpl_printer(name: str) -> bool:
+    """判断是否为斑马系、通常支持 ZPL 的打印机.
+
+    Windows 驱动名称常见形式：
+    - 含 Zebra
+    - 含 ZDesigner（如 ZDesigner ZD888-203dpi ZPL，不含 zebra 字样）
+    - 含 ZD、ZT、GK 等机型前缀且名称中含 ZPL
+    """
+    lower = name.lower()
+    if "zebra" in lower or "zdesigner" in lower:
+        return True
+    if "zpl" in lower and any(
+        token in lower for token in ("zd", "zt", "gk", "gx", "zq", "zm")
+    ):
+        return True
+    return False
+
+
 def get_available_printers() -> list[str]:
-    """获取系统中可用的打印机名称列表."""
+    """获取系统中支持 ZPL 的斑马系打印机列表."""
     if sys.platform == "win32":
         try:
             import win32print  # type: ignore[import-untyped]
@@ -21,7 +39,14 @@ def get_available_printers() -> list[str]:
                 | win32print.PRINTER_ENUM_CONNECTIONS
             )
             printers = win32print.EnumPrinters(flags, None, 2)
-            return [p["pPrinterName"] for p in printers]
+            zebra_printers = []
+
+            for p in printers:
+                printer_name = p["pPrinterName"]
+                if _is_zebra_zpl_printer(printer_name):
+                    zebra_printers.append(printer_name)
+
+            return zebra_printers
         except Exception:
             return []
     return ["[调试] 保存到文件 (非Windows系统)"]
@@ -88,11 +113,9 @@ def _send_via_win32(zpl: str, printer_name: str) -> str:
         doc_info = ("DM Label", None, "RAW")
         win32print.StartDocPrinter(hprinter, 1, doc_info)
         try:
-            win32print.StartPagePrinter(hprinter)
             win32print.WritePrinter(
                 hprinter, zpl.encode("utf-8")
             )
-            win32print.EndPagePrinter(hprinter)
         finally:
             win32print.EndDocPrinter(hprinter)
     except Exception as exc:

@@ -19,17 +19,24 @@ from typing import Optional
 
 from PIL import Image, ImageDraw, ImageFont
 from pylibdmtx.pylibdmtx import encode as dm_encode
+from dm_printer.zpl_generator import (
+    DPI as PRINT_DPI,
+    MODULE_DOTS,
+    MATRIX_MODULES,
+    POSITIONS_MM as PRINT_POSITIONS_MM,
+    PRINT_OFFSET_X_MM,
+)
 
 LABEL_MM = 100.0
-DPI = 300
-RENDER_SCALE = 4
-LABEL_PX = int(LABEL_MM / 25.  * DPI * RENDER_SCALE)
+DPI = PRINT_DPI
+DEFAULT_RENDER_SCALE = 4
 
 # 虚线框：参考点为左上角 (x,y)，宽高 (w,h)
 BORDER_X_MM = 7.5
 BORDER_Y_MM = 7.5
 BORDER_W_MM = 85.0
 BORDER_H_MM = 85.0
+BORDER_LINE_PT = 1.0
 
 AXIS_START_MM = 1.0
 AXIS_END_MM = 99.0
@@ -37,28 +44,38 @@ AXIS_CENTER_MM = 50.0
 
 ARROW_LENGTH_MM = 4.0
 ARROW_WIDTH_MM = 2.8
-HOLLOW_ARROW_LINE_PT = 0.3
+HOLLOW_ARROW_LINE_PT = 1.2
+TEXT_SIZE_MULTIPLIER = 3
 
-POSITIONS_MM: list[tuple[float, float]] = [
-    (20, 20), (40, 20), (60, 20), (80, 20),
-    (20, 40), (40, 40), (60, 40), (80, 40),
-    (20, 60), (40, 60), (60, 60), (80, 60),
-    (20, 80), (40, 80), (60, 80), (80, 80),
-]
+POSITIONS_MM: list[tuple[float, float]] = list(PRINT_POSITIONS_MM)
 
 CODES_PER_LABEL = len(POSITIONS_MM)
 
-DM_MODULES = 12
-DM_MODULE_SIZE_MM = 1.45
-DM_SYMBOL_MM = DM_MODULES * DM_MODULE_SIZE_MM
+DM_MODULES = MATRIX_MODULES
+DM_MODULE_SIZE_MM = MODULE_DOTS * 25.4 / PRINT_DPI
+DM_SYMBOL_SCALE = 1.3
+DM_SYMBOL_MM = DM_MODULES * DM_MODULE_SIZE_MM * DM_SYMBOL_SCALE
 
 
-def _mm(mm: float) -> int:
-    return round(mm / 25.4 * DPI * RENDER_SCALE)
+def _label_px(render_scale: int) -> int:
+    base_label_px = math.ceil(LABEL_MM / 25.4 * DPI)
+    return base_label_px * render_scale
 
 
-def _pt(pt: float) -> int:
-    return max(1, round(pt / 72.0 * DPI * RENDER_SCALE))
+def _mm(mm: float, render_scale: int) -> int:
+    return round(mm / LABEL_MM * _label_px(render_scale))
+
+
+def _pt(pt: float, render_scale: int) -> int:
+    return max(1, round(pt / 72.0 * DPI * render_scale))
+
+
+def _print_safe_x_mm(mm: float, render_scale: int) -> float:
+    """打印补偿时，避免右侧元素被位图边界裁剪。"""
+    if render_scale == 1 and PRINT_OFFSET_X_MM > 0:
+        overflow_mm = max(0.0, mm + PRINT_OFFSET_X_MM - LABEL_MM)
+        return mm - overflow_mm
+    return mm
 
 
 def _load_font(size_px: int) -> ImageFont.FreeTypeFont:
@@ -153,6 +170,7 @@ def _draw_dashed_rect(
 def _arrow_points(
     tip: tuple[int, int],
     direction: tuple[float, float],
+    render_scale: int,
 ) -> list[tuple[int, int]]:
     """计算箭头三角形的三个顶点."""
     tx, ty = tip
@@ -163,8 +181,8 @@ def _arrow_points(
     ux, uy = dx / length, dy / length
     px, py = -uy, ux
 
-    arrow_len = _mm(ARROW_LENGTH_MM)
-    arrow_half_w = _mm(ARROW_WIDTH_MM) / 2
+    arrow_len = _mm(ARROW_LENGTH_MM, render_scale)
+    arrow_half_w = _mm(ARROW_WIDTH_MM, render_scale) / 2
 
     bx = tx - ux * arrow_len
     by = ty - uy * arrow_len
@@ -180,9 +198,10 @@ def _draw_filled_arrow(
     draw: ImageDraw.ImageDraw,
     tip: tuple[int, int],
     direction: tuple[float, float],
+    render_scale: int,
 ) -> None:
     """绘制实心箭头（正半轴方向）."""
-    pts = _arrow_points(tip, direction)
+    pts = _arrow_points(tip, direction, render_scale)
     draw.polygon(pts, fill="black")
 
 
@@ -190,18 +209,19 @@ def _draw_hollow_arrow(
     draw: ImageDraw.ImageDraw,
     tip: tuple[int, int],
     direction: tuple[float, float],
+    render_scale: int,
     line_width: int = 0,
 ) -> None:
     """绘制空心箭头（负半轴方向）."""
     if line_width == 0:
-        line_width = _pt(1.0)
-    pts = _arrow_points(tip, direction)
+        line_width = _pt(1.0, render_scale)
+    pts = _arrow_points(tip, direction, render_scale)
     draw.polygon(pts, fill="white", outline="black", width=line_width)
 
 
 def _render_dm(data: str, target_px: int) -> Image.Image:
     try:
-        encoded = dm_encode(data.encode("utf-8"), size="12x12")
+        encoded = dm_encode(data.encode("utf-8"), size=f"{DM_MODULES}x{DM_MODULES}")
     except TypeError:
         encoded = dm_encode(data.encode("utf-8"))
     img = Image.frombytes(
@@ -213,12 +233,14 @@ def _render_dm(data: str, target_px: int) -> Image.Image:
 def render_label(
     code_value: str,
     output_path: Optional[str] = None,
+    render_scale: int = DEFAULT_RENDER_SCALE,
 ) -> str:
     """渲染一张标签预览图.
 
     Args:
         code_value: DM 码内容（16 个码均为此值）
         output_path: 输出 PNG 路径；为 None 时使用临时文件
+        render_scale: 渲染倍率；预览建议 4，打印建议 1
 
     Returns:
         生成图片的绝对路径
@@ -227,18 +249,22 @@ def render_label(
         fd, output_path = tempfile.mkstemp(suffix=".png", prefix="dm_label_")
         os.close(fd)
 
-    label = Image.new("RGB", (LABEL_PX, LABEL_PX), "white")
+    if render_scale < 1:
+        raise ValueError("render_scale 必须大于等于 1")
+
+    label_px = _label_px(render_scale)
+    label = Image.new("RGB", (label_px, label_px), "white")
     draw = ImageDraw.Draw(label)
 
     # ── 虚线边框 ──
-    border_x0 = _mm(BORDER_X_MM)
-    border_y0 = _mm(BORDER_Y_MM)
-    border_x1 = _mm(BORDER_X_MM + BORDER_W_MM)
-    border_y1 = _mm(BORDER_Y_MM + BORDER_H_MM)
+    border_x0 = _mm(BORDER_X_MM, render_scale)
+    border_y0 = _mm(BORDER_Y_MM, render_scale)
+    border_x1 = _mm(BORDER_X_MM + BORDER_W_MM, render_scale)
+    border_y1 = _mm(BORDER_Y_MM + BORDER_H_MM, render_scale)
 
-    dash = _mm(1.0)
-    gap = _mm(1.0)
-    border_w = _pt(0.5)
+    dash = _mm(1.0, render_scale)
+    gap = _mm(1.0, render_scale)
+    border_w = _pt(BORDER_LINE_PT, render_scale)
     _draw_dashed_rect(
         draw,
         (border_x0, border_y0, border_x1, border_y1),
@@ -246,22 +272,28 @@ def render_label(
     )
 
     # ── 坐标轴 ──
-    axis_w = _pt(1.0)
-    cx = _mm(AXIS_CENTER_MM)
-    x_left = _mm(AXIS_START_MM)
-    x_right = _mm(AXIS_END_MM)
-    y_top = _mm(AXIS_START_MM)
-    y_bottom = _mm(AXIS_END_MM)
+    axis_w = _pt(1.0, render_scale)
+    cx = _mm(AXIS_CENTER_MM, render_scale)
+    x_left = _mm(AXIS_START_MM, render_scale)
+    x_right = _mm(_print_safe_x_mm(AXIS_END_MM, render_scale), render_scale)
+    y_top = _mm(AXIS_START_MM, render_scale)
+    y_bottom = _mm(AXIS_END_MM, render_scale)
 
     # X 轴: 水平线（线段缩进一个箭头长度，避免穿过箭头）
-    arrow_len_px = _mm(ARROW_LENGTH_MM)
+    arrow_len_px = _mm(ARROW_LENGTH_MM, render_scale)
     draw.line(
         [(x_left + arrow_len_px, cx), (x_right - arrow_len_px, cx)],
         fill="black",
         width=axis_w,
     )
-    _draw_filled_arrow(draw, (x_right, cx), (1, 0))
-    _draw_hollow_arrow(draw, (x_left, cx), (-1, 0), _pt(HOLLOW_ARROW_LINE_PT))
+    _draw_filled_arrow(draw, (x_right, cx), (1, 0), render_scale)
+    _draw_hollow_arrow(
+        draw,
+        (x_left, cx),
+        (-1, 0),
+        render_scale,
+        _pt(HOLLOW_ARROW_LINE_PT, render_scale),
+    )
 
     # Y 轴: 垂直线（线段缩进一个箭头长度，避免穿过箭头）
     draw.line(
@@ -269,16 +301,25 @@ def render_label(
         fill="black",
         width=axis_w,
     )
-    _draw_filled_arrow(draw, (cx, y_top), (0, -1))
-    _draw_hollow_arrow(draw, (cx, y_bottom), (0, 1), _pt(HOLLOW_ARROW_LINE_PT))
+    _draw_filled_arrow(draw, (cx, y_top), (0, -1), render_scale)
+    _draw_hollow_arrow(
+        draw,
+        (cx, y_bottom),
+        (0, 1),
+        render_scale,
+        _pt(HOLLOW_ARROW_LINE_PT, render_scale),
+    )
 
     # ── 轴标签 ──
-    font_axis = _load_font(int(30 * RENDER_SCALE))
-    font_code = _load_font(int(40 * RENDER_SCALE))
+    font_axis = _load_font(12 * TEXT_SIZE_MULTIPLIER * render_scale)
+    font_code = _load_font(12 * TEXT_SIZE_MULTIPLIER * render_scale)
 
     _draw_text_with_anchor(
         draw,
-        (_mm(97), _mm(46)),
+        (
+            _mm(_print_safe_x_mm(97, render_scale), render_scale),
+            _mm(46, render_scale),
+        ),
         "X",
         font_axis,
         "black",
@@ -286,7 +327,7 @@ def render_label(
     )
     _draw_text_with_anchor(
         draw,
-        (_mm(47), _mm(6)),
+        (_mm(47, render_scale), _mm(6, render_scale)),
         "Y",
         font_axis,
         "black",
@@ -296,7 +337,7 @@ def render_label(
     # ── 码值文字 ──
     _draw_text_with_anchor(
         draw,
-        (_mm(75.8), _mm(6)),
+        (_mm(75.8, render_scale), _mm(6, render_scale)),
         code_value,
         font_code,
         "black",
@@ -304,14 +345,15 @@ def render_label(
     )
 
     # ── 16 个 DM 码 (12×12 模块) ──
-    dm_size = _mm(DM_SYMBOL_MM)
+    dm_size = _mm(DM_SYMBOL_MM, render_scale)
     half = dm_size // 2
 
     for mx, my in POSITIONS_MM:
-        px_x = _mm(mx)
-        px_y = _mm(my)
+        px_x = _mm(mx, render_scale)
+        px_y = _mm(my, render_scale)
         dm_img = _render_dm(code_value, dm_size)
         label.paste(dm_img, (px_x - half, px_y - half))
 
-    label.save(output_path, dpi=(DPI, DPI))
+    target_dpi = DPI * render_scale
+    label.save(output_path, dpi=(target_dpi, target_dpi))
     return os.path.abspath(output_path)

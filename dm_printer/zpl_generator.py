@@ -11,10 +11,18 @@
 
 from __future__ import annotations
 
+import math
+import os
+import tempfile
+
+from PIL import Image
+
 DPI = 203
 LABEL_SIZE_MM = 100.0
 MODULE_DOTS = 10
 MATRIX_MODULES = 12
+PRINT_OFFSET_X_MM = 4.0
+PRINT_OFFSET_Y_MM = 0.0
 BORDER_X_MM = 7.5
 BORDER_Y_MM = 7.5
 BORDER_W_MM = 85.0
@@ -48,8 +56,36 @@ CODES_PER_LABEL = len(POSITIONS_MM)
 
 
 def mm_to_dots(mm: float) -> int:
-    """毫米 → 打印点数 (向最近整数取整)."""
-    return round(mm * DPI / 25.4)
+    """毫米 → 打印点数，按整张标签点阵同比换算。"""
+    return round(mm / LABEL_SIZE_MM * label_size_dots())
+
+
+def label_size_dots() -> int:
+    """返回整张标签的点阵边长。"""
+    return math.ceil(LABEL_SIZE_MM * DPI / 25.4)
+
+
+def _image_to_gfa(image: Image.Image) -> tuple[int, int, int, str]:
+    """将黑白图片编码为 ZPL ^GFA 所需的十六进制数据."""
+    mono = image.convert("L")
+    width, height = mono.size
+    bytes_per_row = (width + 7) // 8
+    pixels = mono.load()
+    raw = bytearray()
+
+    for y in range(height):
+        for byte_idx in range(bytes_per_row):
+            value = 0
+            for bit in range(8):
+                x = byte_idx * 8 + bit
+                if x >= width:
+                    continue
+                if pixels[x, y] < 128:
+                    value |= 1 << (7 - bit)
+            raw.append(value)
+
+    total_bytes = len(raw)
+    return total_bytes, total_bytes, bytes_per_row, raw.hex().upper()
 
 
 def _add_hline(parts: list[str], x: int, y: int, w: int, t: int) -> None:
@@ -134,34 +170,50 @@ def _add_hollow_arrow(
     arrow_half_w: int,
     t: int,
 ) -> None:
-    # 空心箭头：两条边线 + 底边
-    if direction in ("right", "left"):
-        if direction == "right":
-            base_x = tip_x - arrow_len
-        else:
-            base_x = tip_x + arrow_len
-        _add_hline(parts, base_x, tip_y - arrow_half_w, abs(tip_x - base_x) + 1, t)
+    # 空心箭头：使用确定方向的三条边，避免镜像/反向
+    if direction == "right":
+        base_x = tip_x - arrow_len
+        _add_hline(parts, base_x, tip_y - arrow_half_w, arrow_len, t)
         parts.append(
-            f"^FO{min(base_x, tip_x)},{tip_y - arrow_half_w}"
-            f"^GD{abs(tip_x - base_x) + 1},{arrow_half_w + 1},{max(1, t)},B,R^FS"
+            f"^FO{base_x},{tip_y - arrow_half_w}"
+            f"^GD{arrow_len},{arrow_half_w + 1},{max(1, t)},B,R^FS"
         )
         parts.append(
-            f"^FO{min(base_x, tip_x)},{tip_y}"
-            f"^GD{abs(tip_x - base_x) + 1},{arrow_half_w + 1},{max(1, t)},B,N^FS"
+            f"^FO{base_x},{tip_y}"
+            f"^GD{arrow_len},{arrow_half_w + 1},{max(1, t)},B,N^FS"
         )
-    else:
-        if direction == "up":
-            base_y = tip_y + arrow_len
-        else:
-            base_y = tip_y - arrow_len
-        _add_vline(parts, tip_x - arrow_half_w, min(base_y, tip_y), abs(base_y - tip_y) + 1, t)
+    elif direction == "left":
+        base_x = tip_x + arrow_len
+        _add_hline(parts, tip_x, tip_y - arrow_half_w, arrow_len, t)
         parts.append(
-            f"^FO{tip_x - arrow_half_w},{min(base_y, tip_y)}"
-            f"^GD{arrow_half_w + 1},{abs(base_y - tip_y) + 1},{max(1, t)},B,N^FS"
+            f"^FO{tip_x},{tip_y - arrow_half_w}"
+            f"^GD{arrow_len},{arrow_half_w + 1},{max(1, t)},B,N^FS"
         )
         parts.append(
-            f"^FO{tip_x},{min(base_y, tip_y)}"
-            f"^GD{arrow_half_w + 1},{abs(base_y - tip_y) + 1},{max(1, t)},B,R^FS"
+            f"^FO{tip_x},{tip_y}"
+            f"^GD{arrow_len},{arrow_half_w + 1},{max(1, t)},B,R^FS"
+        )
+    elif direction == "up":
+        base_y = tip_y + arrow_len
+        _add_vline(parts, tip_x - arrow_half_w, tip_y, arrow_len, t)
+        parts.append(
+            f"^FO{tip_x - arrow_half_w},{tip_y}"
+            f"^GD{arrow_half_w + 1},{arrow_len},{max(1, t)},B,R^FS"
+        )
+        parts.append(
+            f"^FO{tip_x},{tip_y}"
+            f"^GD{arrow_half_w + 1},{arrow_len},{max(1, t)},B,N^FS"
+        )
+    else:  # down
+        base_y = tip_y - arrow_len
+        _add_vline(parts, tip_x - arrow_half_w, base_y, arrow_len, t)
+        parts.append(
+            f"^FO{tip_x - arrow_half_w},{base_y}"
+            f"^GD{arrow_half_w + 1},{arrow_len},{max(1, t)},B,N^FS"
+        )
+        parts.append(
+            f"^FO{tip_x},{base_y}"
+            f"^GD{arrow_half_w + 1},{arrow_len},{max(1, t)},B,R^FS"
         )
 
 
@@ -170,119 +222,53 @@ def _build_label_zpl(
     flip_y: bool = False,
     center_offset: bool = True,
 ) -> str:
-    """为一张标签生成完整 ZPL 指令.
+    """为一张标签生成完整 ZPL 指令."""
+    del flip_y
 
-    标签上 16 个 DM 码全部为 code_value。
-    """
-    label_dots = mm_to_dots(LABEL_SIZE_MM)
-    symbol_dots = MATRIX_MODULES * MODULE_DOTS
-    half = symbol_dots // 2
+    from dm_printer.label_renderer import render_label
 
-    parts: list[str] = [
+    label_dots = label_size_dots()
+    fd, image_path = tempfile.mkstemp(suffix=".png", prefix="dm_label_print_")
+    os.close(fd)
+
+    try:
+        # 打印时直接按打印机点阵渲染，避免预览图缩放导致中心漂移。
+        render_label(code_value, image_path, render_scale=1)
+        with Image.open(image_path) as image:
+            image_width, image_height = image.size
+            origin_x = 0
+            origin_y = 0
+            if center_offset:
+                origin_x = max(0, (label_dots - image_width) // 2)
+                origin_y = max(0, (label_dots - image_height) // 2)
+            origin_x += mm_to_dots(PRINT_OFFSET_X_MM)
+            origin_y += mm_to_dots(PRINT_OFFSET_Y_MM)
+            total, used, bytes_per_row, hex_data = _image_to_gfa(image)
+    finally:
+        try:
+            os.remove(image_path)
+        except OSError:
+            pass
+
+    parts = [
         "^XA",
         "^CI28",
+        "^MMT",
+        "^MTT",
+        "^MNY",
+        "^FWN",
+        "^PON",
+        "^LT0",
+        "^LS0",
         f"^PW{label_dots}",
         f"^LL{label_dots}",
         "^LH0,0",
+        "^XB",
+        f"^FO{origin_x},{origin_y}"
+        f"^GFA,{total},{used},{bytes_per_row},{hex_data}^FS",
+        "^PQ1,0,1,N",
+        "^XZ",
     ]
-
-    # ---- 模板元素（边框 / 坐标轴 / 文字）----
-    border_x0 = mm_to_dots(BORDER_X_MM)
-    border_y0 = mm_to_dots(BORDER_Y_MM)
-    border_x1 = mm_to_dots(BORDER_X_MM + BORDER_W_MM)
-    border_y1 = mm_to_dots(BORDER_Y_MM + BORDER_H_MM)
-    dash = max(1, mm_to_dots(BORDER_DASH_MM))
-    gap = max(1, mm_to_dots(BORDER_GAP_MM))
-
-    _add_dashed_hline(parts, border_x0, border_x1, border_y0, dash, gap, BORDER_LINE_DOTS)
-    _add_dashed_hline(parts, border_x0, border_x1, border_y1, dash, gap, BORDER_LINE_DOTS)
-    _add_dashed_vline(parts, border_x0, border_y0, border_y1, dash, gap, BORDER_LINE_DOTS)
-    _add_dashed_vline(parts, border_x1, border_y0, border_y1, dash, gap, BORDER_LINE_DOTS)
-
-    cx = mm_to_dots(AXIS_CENTER_MM)
-    x_left = mm_to_dots(AXIS_START_MM)
-    x_right = mm_to_dots(AXIS_END_MM)
-    y_top = mm_to_dots(AXIS_START_MM)
-    y_bottom = mm_to_dots(AXIS_END_MM)
-
-    arrow_len = max(1, mm_to_dots(ARROW_LENGTH_MM))
-    arrow_half_w = max(1, mm_to_dots(ARROW_WIDTH_MM) // 2)
-
-    # 轴线（缩进箭头长度，避免穿过箭头）
-    _add_hline(
-        parts,
-        x_left + arrow_len,
-        cx,
-        max(1, x_right - x_left - 2 * arrow_len),
-        AXIS_LINE_DOTS,
-    )
-    _add_vline(
-        parts,
-        cx,
-        y_top + arrow_len,
-        max(1, y_bottom - y_top - 2 * arrow_len),
-        AXIS_LINE_DOTS,
-    )
-
-    # 箭头：+X / +Y 实心，-X / -Y 空心
-    _add_filled_arrow(parts, x_right, cx, "right", arrow_len, arrow_half_w)
-    _add_hollow_arrow(
-        parts,
-        x_left,
-        cx,
-        "left",
-        arrow_len,
-        arrow_half_w,
-        HOLLOW_ARROW_LINE_DOTS,
-    )
-    _add_filled_arrow(parts, cx, y_top, "up", arrow_len, arrow_half_w)
-    _add_hollow_arrow(
-        parts,
-        cx,
-        y_bottom,
-        "down",
-        arrow_len,
-        arrow_half_w,
-        HOLLOW_ARROW_LINE_DOTS,
-    )
-
-    # 文字（锚点近似）
-    x_text_x = mm_to_dots(X_TEXT_MM[0]) - TEXT_HEIGHT_DOTS
-    x_text_y = mm_to_dots(X_TEXT_MM[1]) - TEXT_HEIGHT_DOTS
-    y_text_x = mm_to_dots(Y_TEXT_MM[0]) - TEXT_HEIGHT_DOTS
-    y_text_y = mm_to_dots(Y_TEXT_MM[1]) - TEXT_HEIGHT_DOTS
-    code_anchor_x = mm_to_dots(CODE_TEXT_MM[0])
-    code_anchor_y = mm_to_dots(CODE_TEXT_MM[1])
-
-    parts.append(f"^FO{x_text_x},{x_text_y}^A0N,{TEXT_HEIGHT_DOTS},{TEXT_HEIGHT_DOTS}^FDX^FS")
-    parts.append(f"^FO{y_text_x},{y_text_y}^A0N,{TEXT_HEIGHT_DOTS},{TEXT_HEIGHT_DOTS}^FDY^FS")
-    # 底部居中：用 ^FB 做单行居中
-    parts.append(
-        f"^FO{code_anchor_x - 120},{max(0, code_anchor_y - TEXT_HEIGHT_DOTS)}"
-        f"^A0N,{TEXT_HEIGHT_DOTS},{int(TEXT_HEIGHT_DOTS * 0.75)}"
-        "^FB240,1,0,C,0"
-        f"^FD{code_value}^FS"
-    )
-
-    for mx, my in POSITIONS_MM:
-        dx = mm_to_dots(mx)
-        dy = mm_to_dots(my)
-
-        if flip_y:
-            dy = label_dots - dy
-
-        if center_offset:
-            dx -= half
-            dy -= half
-
-        parts.append(
-            f"^FO{dx},{dy}"
-            f"^BXN,{MODULE_DOTS},200"
-            f"^FD{code_value}^FS"
-        )
-
-    parts.append("^PQ1")
-    parts.append("^XZ")
     return "\n".join(parts)
 
 

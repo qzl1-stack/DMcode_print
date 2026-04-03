@@ -32,27 +32,30 @@ ApplicationWindow {
 
             Rectangle { height: 1; Layout.fillWidth: true; color: "#DDD" }
 
-            Label { text: "码值"; font.pixelSize: 13; color: "#555" }
+            Label { text: "码值范围"; font.pixelSize: 13; color: "#555" }
+            
+            Label { text: "起始码值"; font.pixelSize: 12; color: "#777" }
             TextField {
-                id: codeInput
+                id: codeStartInput
                 Layout.fillWidth: true
-                text: backend ? backend.codeValue : ""
-                placeholderText: "输入DM码内容"
+                text: backend ? backend.codeStart : ""
+                placeholderText: "例如 1000"
                 font.pixelSize: 14
                 font.family: "Consolas, monospace"
                 selectByMouse: true
-                onTextChanged: { if (backend) backend.codeValue = text }
+                onTextChanged: { if (backend) backend.codeStart = text }
             }
 
-            Label { text: "打印数量（张）"; font.pixelSize: 13; color: "#555" }
-            SpinBox {
-                id: batchSpin
+            Label { text: "结束码值"; font.pixelSize: 12; color: "#777" }
+            TextField {
+                id: codeEndInput
                 Layout.fillWidth: true
-                from: 1
-                to: 9999
-                value: backend ? backend.batchCount : 1
-                editable: true
-                onValueChanged: { if (backend) backend.batchCount = value }
+                text: backend ? backend.codeEnd : ""
+                placeholderText: "例如 1100"
+                font.pixelSize: 14
+                font.family: "Consolas, monospace"
+                selectByMouse: true
+                onTextChanged: { if (backend) backend.codeEnd = text }
             }
 
             Button {
@@ -268,7 +271,7 @@ ApplicationWindow {
                     Layout.fillHeight: true
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
-                    text: "点击「生成预览」按张数生成标签（最多预览 10 张）"
+                    text: "请输入起始码和结束码，然后点击「生成预览」（最多预览 10 张）"
                     font.pixelSize: 15
                     color: "#AAA"
                     wrapMode: Text.WordWrap

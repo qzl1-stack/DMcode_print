@@ -10,7 +10,7 @@ from typing import Optional
 from PySide6.QtCore import QObject, Property, Signal, Slot, QUrl
 
 from dm_printer.label_renderer import render_label, CODES_PER_LABEL
-from dm_printer.code_generator import generate_batch_codes
+from dm_printer.code_generator import generate_range_codes
 from dm_printer.zpl_generator import generate_zpl
 from dm_printer.printer_backend import get_available_printers, send_zpl
 
@@ -18,8 +18,8 @@ from dm_printer.printer_backend import get_available_printers, send_zpl
 class Backend(QObject):
     """QML 后端：码号生成、标签预览、打印."""
 
-    codeValueChanged = Signal()
-    batchCountChanged = Signal()
+    codeStartChanged = Signal()
+    codeEndChanged = Signal()
     previewImageUrlsChanged = Signal()
     statusChanged = Signal()
     printerListChanged = Signal()
@@ -28,32 +28,32 @@ class Backend(QObject):
 
     def __init__(self, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
-        self._code_value: str = "1"
-        self._batch_count: int = 1
+        self._code_start: str = "1"
+        self._code_end: str = "10"
         self._preview_image_urls: list[str] = []
         self._status: str = "就绪"
         self._printers: list[str] = get_available_printers()
         self._preview_dir = tempfile.mkdtemp(prefix="dm_preview_")
 
-    @Property(str, notify=codeValueChanged)
-    def codeValue(self) -> str:
-        return self._code_value
+    @Property(str, notify=codeStartChanged)
+    def codeStart(self) -> str:
+        return self._code_start
 
-    @codeValue.setter
-    def codeValue(self, value: str) -> None:
-        if self._code_value != value:
-            self._code_value = value
-            self.codeValueChanged.emit()
+    @codeStart.setter
+    def codeStart(self, value: str) -> None:
+        if self._code_start != value:
+            self._code_start = value
+            self.codeStartChanged.emit()
 
-    @Property(int, notify=batchCountChanged)
-    def batchCount(self) -> int:
-        return self._batch_count
+    @Property(str, notify=codeEndChanged)
+    def codeEnd(self) -> str:
+        return self._code_end
 
-    @batchCount.setter
-    def batchCount(self, value: int) -> None:
-        if self._batch_count != value:
-            self._batch_count = max(1, value)
-            self.batchCountChanged.emit()
+    @codeEnd.setter
+    def codeEnd(self, value: str) -> None:
+        if self._code_end != value:
+            self._code_end = value
+            self.codeEndChanged.emit()
 
     @Property("QStringList", notify=previewImageUrlsChanged)
     def previewImageUrls(self) -> list[str]:
@@ -71,17 +71,26 @@ class Backend(QObject):
         self._status = msg
         self.statusChanged.emit()
 
+    @Slot(str)
+    def setExternalStatus(self, msg: str) -> None:
+        """供外部模块更新状态栏文本."""
+        self._set_status(msg)
+
     @Slot()
     def generatePreview(self) -> None:
-        code = self._code_value.strip()
-        if not code:
-            self._set_status("请输入码值")
-            return
-        if not code.isdigit():
-            self._set_status("码值必须为纯数字（例如 1）")
+        start = self._code_start.strip()
+        end = self._code_end.strip()
+        if not start or not end:
+            self._set_status("请输入起始码和结束码")
             return
         try:
-            codes = generate_batch_codes(code, self._batch_count)
+            if not start.isdigit() or not end.isdigit():
+                self._set_status("码值必须为纯数字")
+                return
+            codes = generate_range_codes(start, end)
+            if not codes:
+                self._set_status("生成码失败")
+                return
             total = len(codes)
             show_n = min(total, self.kMaxPreviewLabels)
             show_codes = codes[:show_n]
@@ -114,57 +123,67 @@ class Backend(QObject):
     @Slot(str)
     def printLabels(self, printer_name: str) -> None:
         """打印标签（真实打印机）."""
-        code = self._code_value.strip()
-        if not code:
-            self._set_status("请输入码值")
+        start = self._code_start.strip()
+        end = self._code_end.strip()
+        if not start or not end:
+            self._set_status("请输入起始码和结束码")
             return
-        if not code.isdigit():
-            self._set_status("码值必须为纯数字（例如 1）")
-            return
+        try:
+            if not start.isdigit() or not end.isdigit():
+                self._set_status("码值必须为纯数字")
+                return
+            codes = generate_range_codes(start, end)
+            if not codes:
+                self._set_status("生成码失败")
+                return
 
-        printer = (printer_name or "").strip()
-        if not printer:
-            self._set_status("请先选择打印机")
-            return
+            printer = (printer_name or "").strip()
+            if not printer:
+                self._set_status("请先选择打印机")
+                return
 
-        codes = generate_batch_codes(code, self._batch_count)
-        total = len(codes)
-        success = 0
+            total = len(codes)
+            success = 0
+            for idx, c in enumerate(codes, start=1):
+                self._set_status(f"正在打印 {idx}/{total} ...")
+                zpl_list = generate_zpl(c)
+                for zpl in zpl_list:
+                    msg = send_zpl(zpl, printer)
+                    if "错误" in msg or "出错" in msg:
+                        self._set_status(f"第 {idx} 张打印失败: {msg}")
+                        return
+                success += 1
 
-        for idx, c in enumerate(codes, start=1):
-            self._set_status(f"正在打印 {idx}/{total} ...")
-            zpl_list = generate_zpl(c)
-            for zpl in zpl_list:
-                msg = send_zpl(zpl, printer)
-                if "错误" in msg or "出错" in msg:
-                    self._set_status(f"第 {idx} 张打印失败: {msg}")
-                    return
-            success += 1
-
-        self._set_status(f"打印完成: {success}/{total} 张标签")
+            self._set_status(f"打印完成: {success}/{total} 张标签")
+        except Exception as exc:
+            self._set_status(f"打印失败: {exc}")
 
     @Slot(str, str)
     def saveZpl(self, printer_name: str, save_path: str) -> None:
-        code = self._code_value.strip()
-        if not code:
-            self._set_status("请输入码值")
+        start = self._code_start.strip()
+        end = self._code_end.strip()
+        if not start or not end:
+            self._set_status("请输入起始码和结束码")
             return
-        if not code.isdigit():
-            self._set_status("码值必须为纯数字（例如 1）")
-            return
-
-        codes = generate_batch_codes(code, self._batch_count)
-        all_zpl: list[str] = []
-        for c in codes:
-            all_zpl.extend(generate_zpl(c))
-
-        target = save_path if save_path else "dm_labels.zpl"
-        if target.startswith("file://"):
-            target = QUrl(target).toLocalFile()
-        if not target:
-            target = "dm_labels.zpl"
-
         try:
+            if not start.isdigit() or not end.isdigit():
+                self._set_status("码值必须为纯数字")
+                return
+            codes = generate_range_codes(start, end)
+            if not codes:
+                self._set_status("生成码失败")
+                return
+
+            all_zpl: list[str] = []
+            for c in codes:
+                all_zpl.extend(generate_zpl(c))
+
+            target = save_path if save_path else "dm_labels.zpl"
+            if target.startswith("file://"):
+                target = QUrl(target).toLocalFile()
+            if not target:
+                target = "dm_labels.zpl"
+
             with open(target, "w", encoding="utf-8") as fh:
                 fh.write("\n\n".join(all_zpl))
             self._set_status(f"ZPL 已保存: {os.path.abspath(target)}")

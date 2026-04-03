@@ -60,3 +60,28 @@ def generate_batch_codes(start_code: str, count: int) -> list[str]:
     start_code = start_code.strip()
     start_num = int(start_code)
     return [str(start_num + i) for i in range(count)]
+
+
+def generate_range_codes(start_code: str, end_code: str) -> list[str]:
+    """从起始码到结束码生成范围内的所有码号.
+
+    Args:
+        start_code: 起始码值字符串
+        end_code:   结束码值字符串
+
+    Returns:
+        码值列表，包含从 start 到 end 的所有码（含两端）
+    """
+    start_code = start_code.strip()
+    end_code = end_code.strip()
+
+    if not start_code or not end_code:
+        return []
+
+    start_num = int(start_code)
+    end_num = int(end_code)
+
+    if start_num > end_num:
+        start_num, end_num = end_num, start_num
+
+    return [str(i) for i in range(start_num, end_num + 1)]
