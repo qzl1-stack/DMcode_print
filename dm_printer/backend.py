@@ -10,9 +10,16 @@ from typing import Optional
 from PySide6.QtCore import QObject, Property, Signal, Slot, QUrl
 
 from dm_printer.label_renderer import render_label, CODES_PER_LABEL
+from dm_printer.circle_label_renderer import (
+    render_circle_label,
+    CODES_PER_LABEL as CIRCLE_CODES_PER_LABEL,
+)
 from dm_printer.code_generator import generate_range_codes
-from dm_printer.zpl_generator import generate_zpl
+from dm_printer.zpl_generator import generate_zpl, generate_circle_zpl
 from dm_printer.printer_backend import get_available_printers, send_zpl
+
+TEMPLATE_4X4 = "4x4"
+TEMPLATE_CIRCLE = "circle"
 
 
 class Backend(QObject):
@@ -23,6 +30,7 @@ class Backend(QObject):
     previewImageUrlsChanged = Signal()
     statusChanged = Signal()
     printerListChanged = Signal()
+    templateChanged = Signal()
 
     kMaxPreviewLabels = 10
 
@@ -30,6 +38,7 @@ class Backend(QObject):
         super().__init__(parent)
         self._code_start: str = "1"
         self._code_end: str = "10"
+        self._template: str = TEMPLATE_4X4
         self._preview_image_urls: list[str] = []
         self._status: str = "就绪"
         self._printers: list[str] = get_available_printers()
@@ -55,6 +64,16 @@ class Backend(QObject):
             self._code_end = value
             self.codeEndChanged.emit()
 
+    @Property(str, notify=templateChanged)
+    def template(self) -> str:
+        return self._template
+
+    @template.setter
+    def template(self, value: str) -> None:
+        if self._template != value and value in (TEMPLATE_4X4, TEMPLATE_CIRCLE):
+            self._template = value
+            self.templateChanged.emit()
+
     @Property("QStringList", notify=previewImageUrlsChanged)
     def previewImageUrls(self) -> list[str]:
         return self._preview_image_urls
@@ -76,21 +95,47 @@ class Backend(QObject):
         """供外部模块更新状态栏文本."""
         self._set_status(msg)
 
-    @Slot()
-    def generatePreview(self) -> None:
+    def _is_circle(self) -> bool:
+        return self._template == TEMPLATE_CIRCLE
+
+    def _render_one(self, code: str, path: str) -> None:
+        if self._is_circle():
+            render_circle_label(code, path)
+        else:
+            render_label(code, path)
+
+    def _generate_zpl_one(self, code: str) -> list[str]:
+        if self._is_circle():
+            return generate_circle_zpl(code)
+        return generate_zpl(code)
+
+    def _codes_per_label(self) -> int:
+        if self._is_circle():
+            return CIRCLE_CODES_PER_LABEL
+        return CODES_PER_LABEL
+
+    def _validate_range(self) -> Optional[list[str]]:
+        """校验输入并返回码列表，失败时返回 None."""
         start = self._code_start.strip()
         end = self._code_end.strip()
         if not start or not end:
             self._set_status("请输入起始码和结束码")
+            return None
+        if not start.isdigit() or not end.isdigit():
+            self._set_status("码值必须为纯数字")
+            return None
+        codes = generate_range_codes(start, end)
+        if not codes:
+            self._set_status("生成码失败")
+            return None
+        return codes
+
+    @Slot()
+    def generatePreview(self) -> None:
+        codes = self._validate_range()
+        if codes is None:
             return
         try:
-            if not start.isdigit() or not end.isdigit():
-                self._set_status("码值必须为纯数字")
-                return
-            codes = generate_range_codes(start, end)
-            if not codes:
-                self._set_status("生成码失败")
-                return
             total = len(codes)
             show_n = min(total, self.kMaxPreviewLabels)
             show_codes = codes[:show_n]
@@ -100,43 +145,35 @@ class Backend(QObject):
                 path = os.path.join(
                     self._preview_dir, f"preview_label_{i}.png"
                 )
-                render_label(c, path)
+                self._render_one(c, path)
                 urls.append(
                     QUrl.fromLocalFile(path).toString() + f"?t={ts}"
                 )
             self._preview_image_urls = urls
             self.previewImageUrlsChanged.emit()
 
+            cpl = self._codes_per_label()
+            tpl = "圆码" if self._is_circle() else "4×4"
             if total > self.kMaxPreviewLabels:
                 self._set_status(
-                    f"预览已生成 — 显示前 {show_n} 张（共 {total} 张），"
-                    f"每张 {CODES_PER_LABEL} 个相同 DM 码"
+                    f"预览已生成（{tpl}）— 显示前 {show_n} 张"
+                    f"（共 {total} 张），每张 {cpl} 个 DM 码"
                 )
             else:
                 self._set_status(
-                    f"预览已生成 — 共 {total} 张标签，"
-                    f"每张 {CODES_PER_LABEL} 个相同 DM 码"
+                    f"预览已生成（{tpl}）— 共 {total} 张标签，"
+                    f"每张 {cpl} 个 DM 码"
                 )
         except Exception as exc:
             self._set_status(f"预览生成失败: {exc}")
 
     @Slot(str)
     def printLabels(self, printer_name: str) -> None:
-        """打印标签（真实打印机）."""
-        start = self._code_start.strip()
-        end = self._code_end.strip()
-        if not start or not end:
-            self._set_status("请输入起始码和结束码")
+        """打印标签."""
+        codes = self._validate_range()
+        if codes is None:
             return
         try:
-            if not start.isdigit() or not end.isdigit():
-                self._set_status("码值必须为纯数字")
-                return
-            codes = generate_range_codes(start, end)
-            if not codes:
-                self._set_status("生成码失败")
-                return
-
             printer = (printer_name or "").strip()
             if not printer:
                 self._set_status("请先选择打印机")
@@ -146,7 +183,7 @@ class Backend(QObject):
             success = 0
             for idx, c in enumerate(codes, start=1):
                 self._set_status(f"正在打印 {idx}/{total} ...")
-                zpl_list = generate_zpl(c)
+                zpl_list = self._generate_zpl_one(c)
                 for zpl in zpl_list:
                     msg = send_zpl(zpl, printer)
                     if "错误" in msg or "出错" in msg:
@@ -160,23 +197,13 @@ class Backend(QObject):
 
     @Slot(str, str)
     def saveZpl(self, printer_name: str, save_path: str) -> None:
-        start = self._code_start.strip()
-        end = self._code_end.strip()
-        if not start or not end:
-            self._set_status("请输入起始码和结束码")
+        codes = self._validate_range()
+        if codes is None:
             return
         try:
-            if not start.isdigit() or not end.isdigit():
-                self._set_status("码值必须为纯数字")
-                return
-            codes = generate_range_codes(start, end)
-            if not codes:
-                self._set_status("生成码失败")
-                return
-
             all_zpl: list[str] = []
             for c in codes:
-                all_zpl.extend(generate_zpl(c))
+                all_zpl.extend(self._generate_zpl_one(c))
 
             target = save_path if save_path else "dm_labels.zpl"
             if target.startswith("file://"):

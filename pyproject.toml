@@ -4,10 +4,9 @@ version = "2.0.0"
 description = "专用DM码(Data Matrix)标签打印工具，替代BarTender"
 requires-python = ">=3.10"
 dependencies = [
-    "PyQt6>=6.6.0",
+    "PySide6>=6.8.2.1",
     "Pillow>=10.0.0",
     "pylibdmtx>=0.1.9",
-    "setuptools",
     "pywin32>=306;sys_platform=='win32'",
 ]
 

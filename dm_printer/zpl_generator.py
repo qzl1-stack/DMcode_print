@@ -290,3 +290,78 @@ def generate_zpl(
     if not code_value:
         return []
     return [_build_label_zpl(code_value, flip_y, center_offset)]
+
+
+# ── 圆码模版 (80×60 mm) ──
+
+CIRCLE_LABEL_W_MM = 80.0
+CIRCLE_LABEL_H_MM = 60.0
+CIRCLE_PRINT_OFFSET_X_MM = 0.0
+CIRCLE_PRINT_OFFSET_Y_MM = 0.0
+
+
+def _circle_label_w_dots() -> int:
+    return math.ceil(CIRCLE_LABEL_W_MM * DPI / 25.4)
+
+
+def _circle_label_h_dots() -> int:
+    return math.ceil(CIRCLE_LABEL_H_MM * DPI / 25.4)
+
+
+def _build_circle_label_zpl(code_value: str) -> str:
+    """为一张圆码标签生成完整 ZPL 指令."""
+    from dm_printer.circle_label_renderer import render_circle_label
+
+    w_dots = _circle_label_w_dots()
+    h_dots = _circle_label_h_dots()
+    fd, image_path = tempfile.mkstemp(
+        suffix=".png", prefix="dm_circle_print_"
+    )
+    os.close(fd)
+
+    try:
+        render_circle_label(code_value, image_path, render_scale=1)
+        with Image.open(image_path) as image:
+            total, used, bytes_per_row, hex_data = _image_to_gfa(image)
+    finally:
+        try:
+            os.remove(image_path)
+        except OSError:
+            pass
+
+    offset_x = round(CIRCLE_PRINT_OFFSET_X_MM / CIRCLE_LABEL_W_MM * w_dots)
+    offset_y = round(CIRCLE_PRINT_OFFSET_Y_MM / CIRCLE_LABEL_H_MM * h_dots)
+
+    parts = [
+        "^XA",
+        "^CI28",
+        "^MMT",
+        "^MTT",
+        "^MNY",
+        "^FWN",
+        "^PON",
+        "^LT0",
+        "^LS0",
+        f"^PW{w_dots}",
+        f"^LL{h_dots}",
+        "^LH0,0",
+        f"^FO{offset_x},{offset_y}"
+        f"^GFA,{total},{used},{bytes_per_row},{hex_data}^FS",
+        "^PQ1,0,1,N",
+        "^XZ",
+    ]
+    return "\n".join(parts)
+
+
+def generate_circle_zpl(code_value: str) -> list[str]:
+    """为单个码值生成圆码模版 ZPL（一张标签 = 1 个码）.
+
+    Args:
+        code_value: DM 码内容
+
+    Returns:
+        包含一条 ZPL 指令的列表
+    """
+    if not code_value:
+        return []
+    return [_build_circle_label_zpl(code_value)]

@@ -32,6 +32,60 @@ ApplicationWindow {
 
             Rectangle { height: 1; Layout.fillWidth: true; color: "#DDD" }
 
+            Label { text: "打印模版"; font.pixelSize: 13; color: "#555" }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                Button {
+                    id: tpl4x4Btn
+                    Layout.fillWidth: true
+                    text: "4×4 矩阵"
+                    highlighted: backend && backend.template === "4x4"
+
+                    background: Rectangle {
+                        color: parent.highlighted ?
+                            (parent.pressed ? "#005A9E" : "#106EBE") :
+                            (parent.pressed ? "#999" : "#CCC")
+                        radius: 4
+                    }
+                    contentItem: Text {
+                        text: parent.text
+                        font: parent.font
+                        color: "white"
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+
+                    onClicked: { if (backend) backend.template = "4x4" }
+                }
+
+                Button {
+                    id: tplCircleBtn
+                    Layout.fillWidth: true
+                    text: "圆码"
+                    highlighted: backend && backend.template === "circle"
+
+                    background: Rectangle {
+                        color: parent.highlighted ?
+                            (parent.pressed ? "#005A9E" : "#106EBE") :
+                            (parent.pressed ? "#999" : "#CCC")
+                        radius: 4
+                    }
+                    contentItem: Text {
+                        text: parent.text
+                        font: parent.font
+                        color: "white"
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+
+                    onClicked: { if (backend) backend.template = "circle" }
+                }
+            }
+
+            Rectangle { height: 1; Layout.fillWidth: true; color: "#DDD" }
+
             Label { text: "码值范围"; font.pixelSize: 13; color: "#555" }
             
             Label { text: "起始码值"; font.pixelSize: 12; color: "#777" }
